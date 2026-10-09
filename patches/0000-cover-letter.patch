@@ -1,0 +1,51 @@
+From a11857d569e8044d4b5df4973158882571f773c3 Mon Sep 17 00:00:00 2001
+From: Tianyi Gao <tianyi.gao@ed.ac.uk>
+Date: Fri, 9 Oct 2026 22:06:42 +0000
+Subject: [PATCH 0/3] net/mlx5e: ethtool l4_4_bytes steering via the flex parser
+
+ethtool's IP_USER_FLOW and IPV6_USER_FLOW specs can match the first four
+bytes after the IP header (l4_4_bytes, "l4data" on the command line). For
+an IP protocol the NIC does not parse, that is the only way to steer by
+the protocol's own header: RSS hashes only the IP addresses, so all of its
+traffic between two hosts lands on one RX queue.
+
+mlx5e rejects l4_4_bytes. Devices with a programmable flex parser can
+match it through a parse graph node. Patch 1 adds the node's PRM layout,
+patch 2 uses it for IPv4 rules and patch 3 extends it to IPv6.
+
+The node is tracked per netdev, which assumes one netdev per function;
+functions with several netdevs (switchdev representors, IPoIB child
+interfaces) are not handled.
+
+Tested on BlueField-3 (firmware 32.47.3576, NV PROG_PARSE_GRAPH=1 and
+FLEX_PARSER_PROFILE_ENABLE=4) with bare IPv4 and IPv6 packets of protocol
+253 whose first dword is a port pair:
+
+- 16 rules on the low nibble of the destination port spread 160000
+  packets as exactly 10000 per queue, for IPv4 and for IPv6. Without
+  rules all of them hit one queue and 205-3356 were dropped for lack of
+  RX buffers (three runs).
+- IPv4 and IPv6 rules for one protocol share the node; a rule for a
+  second protocol fails with -EBUSY.
+- l4_4_bytes fails with -EINVAL for the refused protocols, and with
+  -EOPNOTSUPP on a ConnectX-4 Lx, which lacks the capability.
+- With the node in place, UDP keeps its RSS spread and udp4 rules work.
+- 50 add/delete cycles, and module removal with rules installed, are
+  clean.
+
+Based on v6.18.55.
+
+Tianyi Gao (3):
+  net/mlx5: Add flex parser parse graph node definitions
+  net/mlx5e: ethtool, Match l4_4_bytes of IPv4 flows
+  net/mlx5e: ethtool, Match l4_4_bytes of IPv6 flows
+
+ .../mellanox/mlx5/core/en_fs_ethtool.c        | 219 +++++++++++++++++-
+ include/linux/mlx5/mlx5_ifc.h                 | 103 ++++++++
+ 2 files changed, 318 insertions(+), 4 deletions(-)
+
+
+base-commit: 725bd2f3c81d54edccb66fead01d4c0c222e2231
+-- 
+2.34.1
+

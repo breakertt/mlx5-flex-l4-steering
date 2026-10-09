@@ -1,0 +1,55 @@
+From a11857d569e8044d4b5df4973158882571f773c3 Mon Sep 17 00:00:00 2001
+From: Tianyi Gao <tianyi.gao@ed.ac.uk>
+Date: Fri, 9 Oct 2026 22:06:19 +0000
+Subject: [PATCH 3/3] net/mlx5e: ethtool, Match l4_4_bytes of IPv6 flows
+
+The parse graph node behind l4_4_bytes is entered from the IP node, which
+compares the IPv6 next header the same way as the IPv4 protocol. So the
+node already samples IPv6 packets of its protocol, and IPV6_USER_FLOW
+rules only need to be let through:
+
+  ethtool -N <dev> flow-type ip6 l4proto <N> l4data <v> m <m> action <q>
+
+Accept l4_4_bytes in IPV6_USER_FLOW rules under the same conditions as
+for IPv4: an exact l4_proto that the fixed parser does not handle. IPv4
+and IPv6 rules for one protocol share the node.
+
+Signed-off-by: Tianyi Gao <tianyi.gao@ed.ac.uk>
+---
+ .../net/ethernet/mellanox/mlx5/core/en_fs_ethtool.c  | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/en_fs_ethtool.c b/drivers/net/ethernet/mellanox/mlx5/core/en_fs_ethtool.c
+index 48289cdb6..ed51ea8d8 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_fs_ethtool.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_fs_ethtool.c
+@@ -622,6 +622,11 @@ static int set_flex_l4(struct mlx5e_priv *priv, struct mlx5e_ethtool_rule *eth_r
+ 		val = fs->h_u.usr_ip4_spec.l4_4_bytes;
+ 		mask = fs->m_u.usr_ip4_spec.l4_4_bytes;
+ 		break;
++	case IPV6_USER_FLOW:
++		proto = fs->h_u.usr_ip6_spec.l4_proto;
++		val = fs->h_u.usr_ip6_spec.l4_4_bytes;
++		mask = fs->m_u.usr_ip6_spec.l4_4_bytes;
++		break;
+ 	default:
+ 		return 0;
+ 	}
+@@ -813,8 +818,13 @@ static int validate_ip6(struct ethtool_rx_flow_spec *fs)
+ 	struct ethtool_usrip6_spec *l3_mask = &fs->m_u.usr_ip6_spec;
+ 	int ntuples = 0;
+ 
+-	if (l3_mask->l4_4_bytes || l3_mask->tclass)
++	if (l3_mask->tclass)
+ 		return -EINVAL;
++	if (l3_mask->l4_4_bytes) {
++		if (!flex_l4_supported(l3_mask->l4_proto, fs->h_u.usr_ip6_spec.l4_proto))
++			return -EINVAL;
++		ntuples++;
++	}
+ 	if (!ipv6_addr_any((struct in6_addr *)l3_mask->ip6src))
+ 		ntuples++;
+ 
+-- 
+2.34.1
+
